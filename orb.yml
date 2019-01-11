@@ -1,0 +1,131 @@
+version: 2.1
+
+description: Provides jobs/commands for submitting timing metrics to AppOptics.
+
+executors:
+  default:
+    docker:
+      - image: buildpack-deps:jessie
+
+jobs:
+  start-workflow-timing:
+    executor: default
+    steps:
+      - start-timing:
+          start_time_file_name: appoptics-workflow-start-time
+      - persist_to_workspace:
+          root: /tmp
+          paths:
+            - appoptics-workflow-start-time
+
+  stop-workflow-timing:
+    executor: default
+    parameters:
+      appoptics_token:
+        type: env_var_name
+        description: Name of the environment variable holding the AppOptics API token.
+        default: "APPOPTICS_TOKEN"
+      metric_name:
+        type: string
+        description: Metric name to use for timing measurement.
+        default: "circleci.workflow.time"
+    steps:
+      - attach_workspace:
+          at: /tmp
+      - finish-timing:
+          start_time_file_name: appoptics-workflow-start-time
+          metric_name: << parameters.metric_name >>
+          appoptics_token: << parameters.appoptics_token >>
+
+commands:
+  start-timing:
+    description: Write current time to a file (internal use)
+    parameters:
+      start_time_file_name:
+        type: string
+        description: Name of file to which start time should be written.
+        default: "appoptics-start-time"
+    steps:
+      - run:
+          name: Start timing
+          command: date +%s > /tmp/<< parameters.start_time_file_name >>
+  finish-timing:
+    description: Stop timing and submit metric to AppOptics (internal use)
+    parameters:
+      start_time_file_name:
+        type: string
+        description: Name of the file containing the start time. The value stored in this file is subtracted from the current time to derive the elapsed time.
+        default: "appoptics-start-time"
+      metric_name:
+        type: string
+        description: Name of metric to be submitted to AppOptics.
+      tags:
+        type: string
+        description: Space-delimited list of tag=value pairs to be submitted with the timing metric. Defaults to sending the repository name and branch.
+        default: app=$CIRCLE_PROJECT_REPONAME branch=$CIRCLE_BRANCH
+      appoptics_token:
+        type: env_var_name
+        description: Name of the environment variable holding the AppOptics API token.
+        default: "APPOPTICS_TOKEN"
+    steps:
+      - run:
+          name: Finish timing
+          command: |
+            START_TIME=$(cat /tmp/<< parameters.start_time_file_name >>)
+            END_TIME=$(date +%s)
+            TIME=$((END_TIME - START_TIME))
+
+            TAGS=(<< parameters.tags >>)
+            TAG_SET=()
+
+            for tag in ${TAGS[@]}
+            do
+              PARTS=(${tag//=/ })
+              TAG_SET+=("\"${PARTS[0]}\":\"${PARTS[1]}\"")
+            done
+
+            TAG_STRING=$(IFS=,; echo "${TAG_SET[*]}")
+
+            JSON=$(cat \<<EOF
+            {
+              "measurements": [
+                {
+                  "name": "<< parameters.metric_name >>",
+                  "value": $TIME,
+                  "tags": { $TAG_STRING }
+                }
+              ]
+            }
+            EOF
+            )
+
+            curl \
+              -u "$<< parameters.appoptics_token>>:" \
+              -H "Content-Type: application/json" \
+              -d "$JSON" \
+              -X POST \
+              "https://api.appoptics.com/v1/measurements"
+
+  with-timing:
+    description: Measure the execution time of the specified set of steps and submit the timing metric to AppOptics.
+    parameters:
+      steps:
+        type: steps
+        description: Input any custom steps to be instrumented.
+      appoptics_token:
+        type: env_var_name
+        description: Name of the environment variable holding the AppOptics API token.
+        default: "APPOPTICS_TOKEN"
+      metric_name:
+        type: string
+        description: Metric name to use for timing measurement.
+        default: "circleci.job.time"
+    steps:
+      - start-timing:
+          start_time_file_name: appoptics-start-time
+      - steps: << parameters.steps >>
+      - finish-timing:
+          start_time_file_name: appoptics-start-time
+          metric_name: << parameters.metric_name >>
+          tags: app=$CIRCLE_PROJECT_REPONAME branch=$CIRCLE_BRANCH job=$CIRCLE_JOB
+          appoptics_token: << parameters.appoptics_token >>
