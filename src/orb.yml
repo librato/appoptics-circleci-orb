@@ -5,7 +5,7 @@ description: Provides jobs/commands for submitting timing metrics to AppOptics.
 executors:
   default:
     docker:
-      - image: buildpack-deps:jessie
+      - image: swcloud/alpine-curl:latest
 
 jobs:
   start-workflow-timing:
