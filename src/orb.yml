@@ -29,6 +29,22 @@ jobs:
         type: string
         description: Metric name to use for timing measurement.
         default: "circleci.workflow.time"
+      submit_annotation:
+        type: boolean
+        description: Flag indicating whether or not an annotation should be submitted.
+        default: true
+      annotation_name:
+        type: string
+        description: Name of annotation event.
+        default: "circleci.build"
+      annotation_title:
+        type: string
+        description: The annotation title.
+        default: "build-${CIRCLE_BUILD_NUM}"
+      annotation_source:
+        type: string
+        description: Value describing the originating source of the annotation.
+        default: $CIRCLE_PROJECT_REPONAME
     steps:
       - attach_workspace:
           at: /tmp
@@ -36,6 +52,11 @@ jobs:
           start_time_file_name: appoptics-workflow-start-time
           metric_name: << parameters.metric_name >>
           appoptics_token: << parameters.appoptics_token >>
+          submit_annotation: << parameters.submit_annotation >>
+          annotation_name: << parameters.annotation_name >>
+          annotation_title: << parameters.annotation_title >>
+          annotation_source: << parameters.annotation_source >>
+
 
 commands:
   start-timing:
@@ -63,6 +84,22 @@ commands:
         type: string
         description: Space-delimited list of tag=value pairs to be submitted with the timing metric. Defaults to sending the repository name and branch.
         default: app=$CIRCLE_PROJECT_REPONAME branch=$CIRCLE_BRANCH
+      submit_annotation:
+        type: boolean
+        description: Flag indicating whether or not an annotation should be submitted.
+        default: false
+      annotation_name:
+        type: string
+        description: Name of annotation event.
+        default: "circleci.build"
+      annotation_title:
+        type: string
+        description: The annotation title.
+        default: "build-${CIRCLE_BUILD_NUM}"
+      annotation_source:
+        type: string
+        description: Value describing the originating source of the annotation.
+        default: $CIRCLE_PROJECT_REPONAME
       appoptics_token:
         type: env_var_name
         description: Name of the environment variable holding the AppOptics API token.
@@ -105,6 +142,20 @@ commands:
               -d "$JSON" \
               -X POST \
               "https://api.appoptics.com/v1/measurements"
+      - when:
+          condition: << parameters.submit_annotation >>
+          steps:
+            - run:
+                name: Submit annotation
+                command: |
+                  curl \
+                    -u "$<< parameters.appoptics_token>>:" \
+                    -H "Content-Type: application/x-www-form-urlencoded" \
+                    -d title=<< parameters.annotation_title>> \
+                    -d source=<< parameters.annotation_source>> \
+                    -X POST \
+                    "https://api.appoptics.com/v1/annotations/<< parameters.annotation_name >>"
+
 
   with-timing:
     description: Measure the execution time of the specified set of steps and submit the timing metric to AppOptics.
